@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import PoseOverlay from "./PoseOverlay";
+import WorkoutHistory from "./WorkoutHistory";
 import type { TrackerControls } from "./PoseOverlay";
 
 type Source = "none" | "camera" | "upload";
@@ -301,7 +302,11 @@ export default function App() {
           </p>
         )}
       </section>
-
+      <WorkoutHistory
+        trackerRef={trackerRef}
+        sourceLabel={source === "camera" ? "Webcam" : fileName}
+        canSave={source !== "none"}
+      />
       <footer>
         Video is processed locally in your browser. Counts and knee angles are
         experimental movement estimates, not a validated form assessment.

@@ -15,10 +15,18 @@ import {
   PoseLandmarker,
 } from "@mediapipe/tasks-vision";
 
+export type TrackerSummary = {
+  id: string;
+  reps: number;
+  trackingSeconds: number;
+  lastRepMinAngle: number | null;
+};
+
 export type TrackerControls = {
   start: () => void;
   pause: () => void;
   reset: () => void;
+  getSummary: () => TrackerSummary | null;
 };
 
 type Props = {
@@ -57,6 +65,7 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
     start: () => controlsRef.current?.start(),
     pause: () => controlsRef.current?.pause(),
     reset: () => controlsRef.current?.reset(),
+    getSummary: () => controlsRef.current?.getSummary() ?? null,
   }));
 
   useEffect(() => {
@@ -69,6 +78,9 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
     let trackedSide: "left" | "right" | null = null;
     const counter = new SquatCounter();
     let tracking = false;
+    let sessionId = crypto.randomUUID();
+    let trackingStartedAt: number | null = null;
+    let trackingMs = 0;
 
     function resetMeasurement() {
       smoothedAngle = null;
@@ -79,11 +91,26 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
     }
 
     function changeTracking(enabled: boolean) {
+      const now = performance.now();
+
+      if (trackingStartedAt !== null) {
+        trackingMs += now - trackingStartedAt;
+      }
+
+      trackingStartedAt = enabled ? now : null;
       tracking = enabled;
 
-      // A paused or interrupted partial rep must not count on resume.
       resetMeasurement();
       onTrackingChange(enabled);
+    }
+
+    function resetCurrentSession() {
+      changeTracking(false);
+      setSquat(counter.reset());
+
+      sessionId = crypto.randomUUID();
+      trackingStartedAt = null;
+      trackingMs = 0;
     }
 
     controlsRef.current = {
@@ -96,8 +123,23 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
       },
 
       reset() {
-        changeTracking(false);
-        setSquat(counter.reset());
+        resetCurrentSession();
+      },
+
+      getSummary() {
+        const snapshot = counter.snapshot();
+
+        const currentTrackingMs =
+          trackingStartedAt === null
+            ? 0
+            : performance.now() - trackingStartedAt;
+
+        return {
+          id: sessionId,
+          reps: snapshot.reps,
+          trackingSeconds: (trackingMs + currentTrackingMs) / 1000,
+          lastRepMinAngle: snapshot.lastRepMinAngle,
+        };
       },
     };
 
@@ -314,8 +356,7 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
     }
 
     function handleSessionReset() {
-      changeTracking(false);
-      setSquat(counter.reset());
+      resetCurrentSession();
 
       const canvas = canvasRef.current;
       canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
