@@ -308,3 +308,26 @@ footer {
 .angle-panel {
   max-width: calc(50% - 18px);
 }
+
+.session-controls {
+  padding: 0 24px 20px;
+}
+
+.session-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.session-controls p {
+  margin: 12px 0 0;
+  color: #a1a1aa;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .session-controls {
+    padding: 0 16px 16px;
+  }
+}

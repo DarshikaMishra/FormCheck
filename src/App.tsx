@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import PoseOverlay from "./PoseOverlay";
+import type { TrackerControls } from "./PoseOverlay";
 
 type Source = "none" | "camera" | "upload";
 
@@ -15,6 +16,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [cameraLoading, setCameraLoading] = useState(false);
 
+  const trackerRef = useRef<TrackerControls | null>(null);
+  const [isTracking, setIsTracking] = useState(false);
   // Release browser resources when this component is removed.
   useEffect(() => {
     return () => {
@@ -29,6 +32,8 @@ export default function App() {
 
   function releaseSource() {
     // Invalidate any camera request that is still waiting for permission.
+    trackerRef.current?.reset();
+    setIsTracking(false);
     requestRef.current += 1;
 
     const video = videoRef.current;
@@ -142,6 +147,29 @@ export default function App() {
     setError("");
   }
 
+  async function startTracking() {
+    const video = videoRef.current;
+    if (!video || source === "none") return;
+
+    setError("");
+
+    try {
+      // Resume playback if the uploaded video was paused.
+      await video.play();
+      trackerRef.current?.start();
+    } catch {
+      setError("Could not play the video. Try its play button first.");
+    }
+  }
+
+  function pauseTracking() {
+    trackerRef.current?.pause();
+  }
+
+  function resetSession() {
+    trackerRef.current?.reset();
+  }
+
   return (
     <main className="app">
       <header className="header">
@@ -186,8 +214,10 @@ export default function App() {
           {source !== "none" && (
             <PoseOverlay
               key={source}
+              ref={trackerRef}
               videoRef={videoRef}
               mirrored={source === "camera"}
+              onTrackingChange={setIsTracking}
             />
           )}
 
@@ -232,6 +262,38 @@ export default function App() {
             Stop
           </button>
         </div>
+
+        {source !== "none" && (
+          <div className="session-controls">
+            <div className="session-buttons">
+              <button
+                className="primary"
+                onClick={startTracking}
+                disabled={isTracking}
+              >
+                Start tracking
+              </button>
+
+              <button
+                className="secondary"
+                onClick={pauseTracking}
+                disabled={!isTracking}
+              >
+                Pause tracking
+              </button>
+
+              <button className="secondary" onClick={resetSession}>
+                Reset session
+              </button>
+            </div>
+
+            <p>
+              {isTracking
+                ? "Counting active. Begin from standing with your legs visible."
+                : "Counting paused. Start tracking when you’re ready."}
+            </p>
+          </div>
+        )}
 
         {error && (
           <p className="error" role="alert">

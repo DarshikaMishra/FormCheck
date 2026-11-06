@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { calculateKneeAngle } from "./poseMath";
 import type { RefObject } from "react";
 import { SquatCounter } from "./squatCounter";
@@ -9,9 +15,16 @@ import {
   PoseLandmarker,
 } from "@mediapipe/tasks-vision";
 
+export type TrackerControls = {
+  start: () => void;
+  pause: () => void;
+  reset: () => void;
+};
+
 type Props = {
   videoRef: RefObject<HTMLVideoElement | null>;
   mirrored: boolean;
+  onTrackingChange: (tracking: boolean) => void;
 };
 
 type Measurement = {
@@ -25,7 +38,10 @@ const RUNTIME_URL =
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
-export default function PoseOverlay({ videoRef, mirrored }: Props) {
+const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
+  { videoRef, mirrored, onTrackingChange },
+  ref,
+) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState("Loading pose model…");
   const [measurement, setMeasurement] = useState<Measurement | null>(null);
@@ -34,6 +50,14 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
     phase: "waiting",
     lastRepMinAngle: null,
   });
+
+  const controlsRef = useRef<TrackerControls | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    start: () => controlsRef.current?.start(),
+    pause: () => controlsRef.current?.pause(),
+    reset: () => controlsRef.current?.reset(),
+  }));
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +68,7 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
     let lastAngleTime = -1;
     let trackedSide: "left" | "right" | null = null;
     const counter = new SquatCounter();
+    let tracking = false;
 
     function resetMeasurement() {
       smoothedAngle = null;
@@ -52,6 +77,29 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
       setMeasurement(null);
       setSquat(counter.interrupt());
     }
+
+    function changeTracking(enabled: boolean) {
+      tracking = enabled;
+
+      // A paused or interrupted partial rep must not count on resume.
+      resetMeasurement();
+      onTrackingChange(enabled);
+    }
+
+    controlsRef.current = {
+      start() {
+        changeTracking(true);
+      },
+
+      pause() {
+        changeTracking(false);
+      },
+
+      reset() {
+        changeTracking(false);
+        setSquat(counter.reset());
+      },
+    };
 
     async function initialize() {
       try {
@@ -239,7 +287,9 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
                   angle: smoothedAngle,
                   side,
                 });
-                setSquat(counter.update(smoothedAngle, time));
+                if (tracking) {
+                  setSquat(counter.update(smoothedAngle, time));
+                }
 
                 setStatus("Tracking knee angle");
               }
@@ -260,11 +310,11 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
     const video = videoRef.current;
 
     function handlePause() {
-      resetMeasurement();
+      changeTracking(false);
     }
 
     function handleSessionReset() {
-      resetMeasurement();
+      changeTracking(false);
       setSquat(counter.reset());
 
       const canvas = canvasRef.current;
@@ -285,8 +335,9 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
       video?.removeEventListener("loadstart", handleSessionReset);
       landmarker?.close();
       landmarker = null;
+      controlsRef.current = null;
     };
-  }, [videoRef]);
+  }, [videoRef, onTrackingChange]);
 
   return (
     <>
@@ -334,4 +385,6 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
       </div>
     </>
   );
-}
+});
+
+export default PoseOverlay;
