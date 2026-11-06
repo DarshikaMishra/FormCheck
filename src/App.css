@@ -216,3 +216,33 @@ footer {
     aspect-ratio: 4 / 3;
   }
 }
+
+.pose-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.pose-overlay.mirrored {
+  transform: scaleX(-1);
+}
+
+.pose-status {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  padding: 8px 12px;
+  border: 1px solid #a3e63540;
+  border-radius: 8px;
+  background: #09090be6;
+  color: #d9f99d;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+}

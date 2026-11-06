@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
+import PoseOverlay from "./PoseOverlay";
 
 type Source = "none" | "camera" | "upload";
 
@@ -182,6 +183,13 @@ export default function App() {
               );
             }}
           />
+          {source !== "none" && (
+            <PoseOverlay
+              key={source}
+              videoRef={videoRef}
+              mirrored={source === "camera"}
+            />
+          )}
 
           {source === "none" && (
             <div className="placeholder">
@@ -233,8 +241,8 @@ export default function App() {
       </section>
 
       <footer>
-        Video stays in your browser. Pose tracking and rep counting are coming
-        next.
+        Video is processed locally in your browser. Movement tracking is
+        experimental; rep counting is coming next.
       </footer>
     </main>
   );
