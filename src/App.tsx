@@ -241,8 +241,8 @@ export default function App() {
       </section>
 
       <footer>
-        Video is processed locally in your browser. Movement tracking is
-        experimental; rep counting is coming next.
+        Video is processed locally in your browser. Counts and knee angles are
+        experimental movement estimates, not a validated form assessment.
       </footer>
     </main>
   );

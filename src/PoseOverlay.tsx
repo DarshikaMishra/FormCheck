@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { calculateKneeAngle } from "./poseMath";
 import type { RefObject } from "react";
+import { SquatCounter } from "./squatCounter";
+import type { SquatSnapshot } from "./squatCounter";
 import {
   DrawingUtils,
   FilesetResolver,
@@ -27,6 +29,11 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState("Loading pose model…");
   const [measurement, setMeasurement] = useState<Measurement | null>(null);
+  const [squat, setSquat] = useState<SquatSnapshot>({
+    reps: 0,
+    phase: "waiting",
+    lastRepMinAngle: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -36,12 +43,14 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
     let smoothedAngle: number | null = null;
     let lastAngleTime = -1;
     let trackedSide: "left" | "right" | null = null;
+    const counter = new SquatCounter();
 
     function resetMeasurement() {
       smoothedAngle = null;
       lastAngleTime = -1;
       trackedSide = null;
       setMeasurement(null);
+      setSquat(counter.interrupt());
     }
 
     async function initialize() {
@@ -215,6 +224,7 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
                   elapsed > 300
                 ) {
                   smoothedAngle = rawAngle;
+                  counter.interrupt();
                 } else {
                   // Blend the new angle with the previous estimate.
                   // A 120 ms time constant reduces jitter with a small delay.
@@ -229,6 +239,7 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
                   angle: smoothedAngle,
                   side,
                 });
+                setSquat(counter.update(smoothedAngle, time));
 
                 setStatus("Tracking knee angle");
               }
@@ -246,11 +257,32 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
       frameId = requestAnimationFrame(processFrame);
     }
 
+    const video = videoRef.current;
+
+    function handlePause() {
+      resetMeasurement();
+    }
+
+    function handleSessionReset() {
+      resetMeasurement();
+      setSquat(counter.reset());
+
+      const canvas = canvasRef.current;
+      canvas?.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    video?.addEventListener("pause", handlePause);
+    video?.addEventListener("seeking", handleSessionReset);
+    video?.addEventListener("loadstart", handleSessionReset);
+
     void initialize();
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(frameId);
+      video?.removeEventListener("pause", handlePause);
+      video?.removeEventListener("seeking", handleSessionReset);
+      video?.removeEventListener("loadstart", handleSessionReset);
       landmarker?.close();
       landmarker = null;
     };
@@ -277,6 +309,27 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
           {measurement
             ? `${measurement.side === "left" ? "Left" : "Right"} leg tracked`
             : "Waiting for visible leg landmarks"}
+        </span>
+      </div>
+      <div className="rep-panel">
+        <span className="angle-label">Completed reps</span>
+
+        <strong>{squat.reps}</strong>
+
+        <span className="rep-phase">
+          {squat.phase === "waiting"
+            ? "Stand tall to begin"
+            : squat.phase === "standing"
+              ? "Standing"
+              : squat.phase === "lowering"
+                ? "Lowering"
+                : "Rising"}
+        </span>
+
+        <span className="angle-detail">
+          {squat.lastRepMinAngle !== null
+            ? `Last rep min. knee angle: ${Math.round(squat.lastRepMinAngle)}°`
+            : "Waiting for a complete squat"}
         </span>
       </div>
     </>
