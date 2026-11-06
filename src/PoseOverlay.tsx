@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { calculateKneeAngle } from "./poseMath";
 import type { RefObject } from "react";
 import {
   DrawingUtils,
@@ -11,6 +12,11 @@ type Props = {
   mirrored: boolean;
 };
 
+type Measurement = {
+  angle: number;
+  side: "left" | "right";
+};
+
 const RUNTIME_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm";
 
@@ -20,12 +26,23 @@ const MODEL_URL =
 export default function PoseOverlay({ videoRef, mirrored }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState("Loading pose model…");
+  const [measurement, setMeasurement] = useState<Measurement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let frameId = 0;
     let landmarker: PoseLandmarker | null = null;
     let lastVideoTime = -1;
+    let smoothedAngle: number | null = null;
+    let lastAngleTime = -1;
+    let trackedSide: "left" | "right" | null = null;
+
+    function resetMeasurement() {
+      smoothedAngle = null;
+      lastAngleTime = -1;
+      trackedSide = null;
+      setMeasurement(null);
+    }
 
     async function initialize() {
       try {
@@ -112,6 +129,7 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
           const landmarks = result.landmarks[0];
 
           if (!landmarks) {
+            resetMeasurement();
             setStatus("No person detected");
           } else {
             const drawing = new DrawingUtils(context);
@@ -154,14 +172,71 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
             const leftLegVisible = [23, 25, 27].every(isVisible);
             const rightLegVisible = [24, 26, 28].every(isVisible);
 
-            setStatus(
-              leftLegVisible || rightLegVisible
-                ? "Pose detected — leg landmarks visible"
-                : "Pose detected — keep hips, knees, and ankles in view",
-            );
+            if (!leftLegVisible && !rightLegVisible) {
+              resetMeasurement();
+              setStatus("Pose detected — keep hips, knees, and ankles in view");
+            } else {
+              // Keep using the same leg while it remains visible.
+              // This avoids jumping between left and right measurements.
+              let side: "left" | "right";
+
+              if (trackedSide === "left" && leftLegVisible) {
+                side = "left";
+              } else if (trackedSide === "right" && rightLegVisible) {
+                side = "right";
+              } else {
+                side = leftLegVisible ? "left" : "right";
+              }
+
+              const [hipIndex, kneeIndex, ankleIndex] =
+                side === "left" ? [23, 25, 27] : [24, 26, 28];
+
+              const rawAngle = calculateKneeAngle(
+                landmarks[hipIndex],
+                landmarks[kneeIndex],
+                landmarks[ankleIndex],
+                video.videoWidth,
+                video.videoHeight,
+              );
+
+              if (rawAngle === null) {
+                resetMeasurement();
+                setStatus("Could not measure knee angle");
+              } else {
+                const time = video.currentTime * 1000;
+                const elapsed = time - lastAngleTime;
+
+                // Start fresh after tracking loss, a leg switch,
+                // replay, seeking, or a long gap between frames.
+                if (
+                  smoothedAngle === null ||
+                  trackedSide !== side ||
+                  elapsed <= 0 ||
+                  elapsed > 300
+                ) {
+                  smoothedAngle = rawAngle;
+                } else {
+                  // Blend the new angle with the previous estimate.
+                  // A 120 ms time constant reduces jitter with a small delay.
+                  const alpha = 1 - Math.exp(-elapsed / 120);
+                  smoothedAngle += alpha * (rawAngle - smoothedAngle);
+                }
+
+                trackedSide = side;
+                lastAngleTime = time;
+
+                setMeasurement({
+                  angle: smoothedAngle,
+                  side,
+                });
+
+                setStatus("Tracking knee angle");
+              }
+            }
           }
         } catch (error) {
           console.error("Pose detection failed:", error);
+          resetMeasurement();
           context.clearRect(0, 0, canvas.width, canvas.height);
           setStatus("Detection failed. Stop and reopen the video source.");
           return;
@@ -190,6 +265,19 @@ export default function PoseOverlay({ videoRef, mirrored }: Props) {
       />
       <div className="pose-status" role="status">
         {status}
+      </div>
+      <div className="angle-panel">
+        <span className="angle-label">Knee angle · video estimate</span>
+
+        <strong>
+          {measurement ? `${Math.round(measurement.angle)}°` : "—"}
+        </strong>
+
+        <span className="angle-detail">
+          {measurement
+            ? `${measurement.side === "left" ? "Left" : "Right"} leg tracked`
+            : "Waiting for visible leg landmarks"}
+        </span>
       </div>
     </>
   );
