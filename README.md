@@ -1,5 +1,7 @@
 # FormCheck
 
+[Live Demo](https://form-check-sepia.vercel.app)
+
 A browser-based squat tracker built with React, TypeScript, and MediaPipe.
 Use a webcam or upload a video to view pose landmarks, estimated knee
 angles, and completed squat counts.
