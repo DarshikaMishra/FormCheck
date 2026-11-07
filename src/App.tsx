@@ -171,6 +171,65 @@ export default function App() {
     trackerRef.current?.reset();
   }
 
+  function downloadEvaluation() {
+    const tracker = trackerRef.current;
+    if (!tracker) return;
+
+    tracker.pause();
+
+    const evaluation = tracker.getEvaluation();
+    const summary = tracker.getSummary();
+    const video = videoRef.current;
+
+    if (!evaluation || !summary || !video) return;
+
+    const report = {
+      exportedAt: new Date().toISOString(),
+      source: source === "camera" ? "webcam" : "uploaded-video",
+      sourceLabel: source === "camera" ? "Webcam" : fileName,
+
+      environment: {
+        browserUserAgent: navigator.userAgent,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        playbackRate: video.playbackRate,
+        laptopModel: null,
+        chip: null,
+        memoryGB: null,
+        lighting: null,
+        cameraAngle: null,
+      },
+
+      evaluationNotes: {
+        hardwareAndConditions: "Fill in the null fields manually.",
+        speedMetric:
+          "Successful detection calls per wall-clock second while tracking is active and video is playing.",
+        counting:
+          "Real-time playback; frames may be skipped. Repeatability is not yet established.",
+        manualLabels: "Not yet supplied.",
+      },
+
+      summary,
+      ...evaluation,
+    };
+
+    const blob = new Blob([JSON.stringify(report, null, 2)], {
+      type: "application/json",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `formcheck-evaluation-${Date.now()}.json`;
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   return (
     <main className="app">
       <header className="header">
@@ -273,6 +332,9 @@ export default function App() {
                 disabled={isTracking}
               >
                 Start tracking
+              </button>
+              <button className="secondary" onClick={downloadEvaluation}>
+                Download evaluation
               </button>
 
               <button

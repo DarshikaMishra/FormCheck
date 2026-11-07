@@ -6,6 +6,8 @@ import {
   useState,
 } from "react";
 import { calculateKneeAngle } from "./poseMath";
+import { PoseEvaluation } from "./evaluation";
+import type { EvaluationData, PoseMetrics } from "./evaluation";
 import type { RefObject } from "react";
 import { SquatCounter } from "./squatCounter";
 import type { SquatSnapshot } from "./squatCounter";
@@ -27,6 +29,7 @@ export type TrackerControls = {
   pause: () => void;
   reset: () => void;
   getSummary: () => TrackerSummary | null;
+  getEvaluation: () => EvaluationData | null;
 };
 
 type Props = {
@@ -58,6 +61,13 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
     phase: "waiting",
     lastRepMinAngle: null,
   });
+  const [poseMetrics, setPoseMetrics] = useState<PoseMetrics>({
+    updates: 0,
+    seconds: 0,
+    updatesPerSecond: 0,
+    averageInferenceMs: 0,
+    framesWithPose: 0,
+  });
 
   const controlsRef = useRef<TrackerControls | null>(null);
 
@@ -66,6 +76,7 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
     pause: () => controlsRef.current?.pause(),
     reset: () => controlsRef.current?.reset(),
     getSummary: () => controlsRef.current?.getSummary() ?? null,
+    getEvaluation: () => controlsRef.current?.getEvaluation() ?? null,
   }));
 
   useEffect(() => {
@@ -78,6 +89,8 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
     let trackedSide: "left" | "right" | null = null;
     const counter = new SquatCounter();
     let tracking = false;
+    let evaluation = new PoseEvaluation();
+    let lastMetricsRender = 0;
     let sessionId = crypto.randomUUID();
     let trackingStartedAt: number | null = null;
     let trackingMs = 0;
@@ -92,6 +105,8 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
 
     function changeTracking(enabled: boolean) {
       const now = performance.now();
+      evaluation.pause(now);
+      setPoseMetrics(evaluation.metrics(now));
 
       if (trackingStartedAt !== null) {
         trackingMs += now - trackingStartedAt;
@@ -111,6 +126,9 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
       sessionId = crypto.randomUUID();
       trackingStartedAt = null;
       trackingMs = 0;
+      evaluation = new PoseEvaluation();
+      lastMetricsRender = 0;
+      setPoseMetrics(evaluation.metrics(performance.now()));
     }
 
     controlsRef.current = {
@@ -140,6 +158,9 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
           trackingSeconds: (trackingMs + currentTrackingMs) / 1000,
           lastRepMinAngle: snapshot.lastRepMinAngle,
         };
+      },
+      getEvaluation() {
+        return evaluation.report(performance.now());
       },
     };
 
@@ -201,13 +222,21 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
       }
 
       // Skip duplicate frames, paused videos, and frames that aren't ready.
-      if (
+      const canProcess =
         video.readyState >= 2 &&
         !video.paused &&
         !video.ended &&
-        !video.seeking &&
-        video.currentTime !== lastVideoTime
-      ) {
+        !video.seeking;
+
+      const now = performance.now();
+
+      if (tracking && canProcess) {
+        evaluation.resume(now);
+      } else {
+        evaluation.pause(now);
+      }
+
+      if (canProcess && video.currentTime !== lastVideoTime) {
         lastVideoTime = video.currentTime;
 
         try {
@@ -221,7 +250,23 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
 
           // MediaPipe requires timestamps that keep increasing,
           // including when the uploaded video is replayed.
-          const result = landmarker.detectForVideo(video, performance.now());
+          const inferenceStarted = performance.now();
+
+          const result = landmarker.detectForVideo(video, inferenceStarted);
+
+          const inferenceEnded = performance.now();
+
+          if (tracking) {
+            evaluation.recordFrame(
+              inferenceEnded - inferenceStarted,
+              result.landmarks.length > 0,
+            );
+          }
+
+          if (inferenceEnded - lastMetricsRender >= 1000) {
+            setPoseMetrics(evaluation.metrics(inferenceEnded));
+            lastMetricsRender = inferenceEnded;
+          }
 
           context.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -330,7 +375,18 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
                   side,
                 });
                 if (tracking) {
-                  setSquat(counter.update(smoothedAngle, time));
+                  const previousReps = counter.snapshot().reps;
+                  const next = counter.update(smoothedAngle, time);
+
+                  if (next.reps > previousReps) {
+                    evaluation.recordRep({
+                      rep: next.reps,
+                      videoTimeSeconds: video.currentTime,
+                      minimumKneeAngle: next.lastRepMinAngle,
+                    });
+                  }
+
+                  setSquat(next);
                 }
 
                 setStatus("Tracking knee angle");
@@ -339,6 +395,8 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
           }
         } catch (error) {
           console.error("Pose detection failed:", error);
+          evaluation.pause(performance.now());
+          setPoseMetrics(evaluation.metrics(performance.now()));
           resetMeasurement();
           context.clearRect(0, 0, canvas.width, canvas.height);
           setStatus("Detection failed. Stop and reopen the video source.");
@@ -389,6 +447,18 @@ const PoseOverlay = forwardRef<TrackerControls, Props>(function PoseOverlay(
       />
       <div className="pose-status" role="status">
         {status}
+      </div>
+      <div className="performance-panel">
+        {poseMetrics.updates > 0 ? (
+          <>
+            <strong>{poseMetrics.updatesPerSecond.toFixed(1)}</strong>
+            {" pose updates/sec · "}
+            {poseMetrics.averageInferenceMs.toFixed(1)}
+            {" ms/detection"}
+          </>
+        ) : (
+          "Start tracking to measure pose-update speed"
+        )}
       </div>
       <div className="angle-panel">
         <span className="angle-label">Knee angle · video estimate</span>
